@@ -39,6 +39,7 @@ from httpx import Request
 import pyzotero as pz
 
 from . import zotero_errors as ze
+from .api import ZoteroAPIOld
 from .filetransport import Client as File_Client
 
 # Avoid hanging the application if there's no server response
@@ -99,7 +100,7 @@ def cleanwrap(func):
 def chunks(iterable, n):
     """Yield successive n-sized chunks from l."""
     for i in range(0, len(iterable), n):
-        yield iterable[i : i + n]
+        yield iterable[i: i + n]
 
 
 def tcache(func):
@@ -114,7 +115,7 @@ def tcache(func):
         params["timeout"] = timeout
         r = Request(
             "GET",
-            build_url(self.endpoint, query_string),
+            build_url(self.endpoint, query_string),     # type: ignore
             params=params,
         )
         with httpx.Client() as client:
@@ -187,14 +188,14 @@ def retrieve(func):
         self.links = self._extract_links()
         # determine content and format, based on url params
         content = (
-            self.content.search(str(self.request.url))
-            and self.content.search(str(self.request.url)).group(0)
-        ) or "bib"
+                      self.content.search(str(self.request.url))
+                      and self.content.search(str(self.request.url)).group(0)
+                  ) or "bib"
         # select format, or assume JSON
         content_type_header = self.request.headers["Content-Type"].lower() + ";"
         fmt = self.formats.get(
             # strip "; charset=..." segment
-            content_type_header[0 : content_type_header.index(";")],
+            content_type_header[0: content_type_header.index(";")],
             "json",
         )
         # clear all query parameters
@@ -252,6 +253,11 @@ def ss_wrap(func):
     return wrapper
 
 
+def _check_for_component(url, component):
+    """Check a url path query fragment for a specific query parameter"""
+    return bool(parse_qs(url).get(component))
+
+
 class Zotero:
     """Zotero API methods
     A full list of methods can be found here:
@@ -260,8 +266,8 @@ class Zotero:
 
     def __init__(
         self,
-        library_id=None,
-        library_type=None,
+        library_id,
+        library_type,
         api_key=None,
         preserve_json_order=False,
         locale="en-US",
@@ -361,12 +367,8 @@ class Zotero:
         if c := self.client:
             c.close()
 
-    def _check_for_component(self, url, component):
-        """Check a url path query fragment for a specific query parameter"""
-        return bool(parse_qs(url).get(component))
-
     def _striplocal(self, url):
-        """We need to remve the leading "/api" substring from urls if we're running in local mode"""
+        """We need to remove the leading "/api" substring from urls if we're running in local mode"""
         if self.local:
             parsed = urlparse(url)
             purepath = PurePosixPath(unquote(parsed.path))
@@ -456,7 +458,7 @@ class Zotero:
         self._check_backoff()
         # don't set locale if the url already contains it
         # we always add a locale if it's a "standalone" or first call
-        needs_locale = not self.links or not self._check_for_component(
+        needs_locale = not self.links or not _check_for_component(
             self.links.get("next"),
             "locale",
         )
@@ -478,7 +480,7 @@ class Zotero:
         # file URI errors are raised immediately so we have to try here
         try:
             self.request = self.client.get(
-                url=final_url,
+                url=final_url,  # type: ignore
                 params=final_params,
                 headers=self.default_headers(),
                 timeout=timeout,
@@ -488,7 +490,7 @@ class Zotero:
             # File URI handler logic
             fc = File_Client()
             request = fc.get(
-                url=final_url,
+                url=final_url,  # type: ignore
                 params=final_params,
                 headers=self.default_headers(),
                 timeout=timeout,
@@ -517,7 +519,7 @@ class Zotero:
                 fragment = f"{parsed[2]}?{parsed[4]}"
                 extracted[key] = fragment
             # add a 'self' link
-            parsed = list(urlparse(self.self_link))
+            parsed = list(urlparse(self.self_link))  # type: ignore
             # strip 'format' query parameter
             stripped = "&".join(
                 ["=".join(p) for p in parse_qsl(parsed[4])[:2] if p[0] != "format"],
@@ -563,7 +565,7 @@ class Zotero:
             }
             # perform the request, and check whether the response returns 304
             self._check_backoff()
-            req = self.client.get(query, headers=headers)
+            req = self.client.get(query, headers=headers)  # type: ignore
             try:
                 req.raise_for_status()
             except httpx.HTTPError as exc:
@@ -692,12 +694,12 @@ class Zotero:
         headers = {}
         headers.update({"Content-Type": "application/json"})
         return self.client.put(
-            url=build_url(
+            url=build_url(  # type: ignore
                 self.endpoint,
                 f"/{self.library_type}/{self.library_id}/items/{itemkey}/fulltext",
             ),
             headers=headers,
-            data=json.dumps(payload),
+            data=json.dumps(payload),  # type: ignore
         )
 
     def new_fulltext(self, since):
@@ -709,7 +711,7 @@ class Zotero:
         params = {"since": since}
         self._check_backoff()
         resp = self.client.get(
-            build_url(self.endpoint, query_string),
+            build_url(self.endpoint, query_string),  # type: ignore
             params=params,
             headers=headers,
         )
@@ -780,7 +782,8 @@ class Zotero:
     @retrieve
     def item(self, item, **kwargs):
         """Get a specific item"""
-        query_string = f"/{self.library_type}/{self.library_id}/items/{item.upper()}"
+        # query_string = f"/{self.library_type}/{self.library_id}/items/{item.upper()}"
+        query_string = ZoteroAPIOld.ITEMS_itemkey.format(library_type=self.library_type, library_id=self.library_id, itemkey=item.upper())
         return self._build_query(query_string)
 
     @retrieve
@@ -794,14 +797,14 @@ class Zotero:
     def dump(self, itemkey, filename=None, path=None):
         """Dump a file attachment to disk, with optional filename and path"""
         if not filename:
-            filename = self.item(itemkey)["data"]["filename"]
+            filename = self.item(itemkey)["data"]["filename"]  # type: ignore
         pth = Path(path) / filename if path else filename
         file = self.file(itemkey)
         if self.snapshot:
             self.snapshot = False
             pth += ".zip"
         with Path(pth).open("wb") as f:
-            f.write(file)
+            f.write(file)  # type: ignore
 
     @retrieve
     def children(self, item, **kwargs):
@@ -1076,12 +1079,12 @@ class Zotero:
         headers = {"Zotero-Write-Token": token()}
         self._check_backoff()
         req = self.client.post(
-            url=build_url(
+            url=build_url(  # type: ignore
                 self.endpoint,
                 f"/{self.library_type}/{self.library_id}/searches",
             ),
             headers=headers,
-            data=json.dumps(payload),
+            data=json.dumps(payload),  # type: ignore
         )
         self.request = req
         try:
@@ -1103,7 +1106,7 @@ class Zotero:
         headers = {"Zotero-Write-Token": token()}
         self._check_backoff()
         req = self.client.delete(
-            url=build_url(
+            url=build_url(  # type: ignore
                 self.endpoint,
                 f"/{self.library_type}/{self.library_id}/searches",
             ),
@@ -1150,7 +1153,7 @@ class Zotero:
         query_string = "/itemFields"
         r = Request(
             "GET",
-            build_url(self.endpoint, query_string),
+            build_url(self.endpoint, query_string),  # type: ignore
             params=params,
         )
         with httpx.Client() as client:
@@ -1255,7 +1258,7 @@ class Zotero:
         query_string = "/itemFields"
         return query_string, params
 
-    def item_attachment_link_modes():
+    def item_attachment_link_modes(self):
         """Get all available link mode types.
         Note: No viable REST API route was found for this, so I tested and built a list from documentation found
         here - https://www.zotero.org/support/dev/web_api/json
@@ -1279,7 +1282,7 @@ class Zotero:
         to_send = list(self._cleanup(*payload, allow=("key")))
         self._check_backoff()
         req = self.client.post(
-            url=build_url(
+            url=build_url(  # type: ignore
                 self.endpoint,
                 f"/{self.library_type}/{self.library_id}/items",
             ),
@@ -1308,11 +1311,11 @@ class Zotero:
                 payload = json.dumps({"parentItem": parentid})
                 self._check_backoff()
                 presp = self.client.patch(
-                    url=build_url(
+                    url=build_url(  # type: ignore
                         self.endpoint,
                         f"/{self.library_type}/{self.library_id}/items/{value}",
                     ),
-                    data=payload,
+                    data=payload,  # type: ignore
                     headers=dict(uheaders),
                 )
                 self.request = presp
@@ -1351,7 +1354,7 @@ class Zotero:
             headers["If-Unmodified-Since-Version"] = str(last_modified)
         self._check_backoff()
         req = self.client.post(
-            url=build_url(
+            url=build_url(  # type: ignore
                 self.endpoint,
                 f"/{self.library_type}/{self.library_id}/collections",
             ),
@@ -1381,7 +1384,7 @@ class Zotero:
         headers = {"If-Unmodified-Since-Version": str(modified)}
         headers.update({"Content-Type": "application/json"})
         return self.client.put(
-            url=build_url(
+            url=build_url(  # type: ignore
                 self.endpoint,
                 f"/{self.library_type}/{self.library_id}/collections/{key}",
             ),
@@ -1429,7 +1432,7 @@ class Zotero:
         ident = payload["key"]
         headers = {"If-Unmodified-Since-Version": str(modified)}
         return self.client.patch(
-            url=build_url(
+            url=build_url(  # type: ignore
                 self.endpoint,
                 f"/{self.library_type}/{self.library_id}/items/{ident}",
             ),
@@ -1447,11 +1450,11 @@ class Zotero:
         for chunk in chunks(to_send, DEFAULT_NUM_ITEMS):
             self._check_backoff()
             req = self.client.post(
-                url=build_url(
+                url=build_url(  # type: ignore
                     self.endpoint,
                     f"/{self.library_type}/{self.library_id}/items/",
                 ),
-                data=json.dumps(chunk),
+                data=json.dumps(chunk),  # type: ignore
             )
             self.request = req
             try:
@@ -1473,11 +1476,11 @@ class Zotero:
         for chunk in chunks(to_send, DEFAULT_NUM_ITEMS):
             self._check_backoff()
             req = self.client.post(
-                url=build_url(
+                url=build_url(  # type: ignore
                     self.endpoint,
                     f"/{self.library_type}/{self.library_id}/collections/",
                 ),
-                data=json.dumps(chunk),
+                data=json.dumps(chunk),  # type: ignore
             )
             self.request = req
             try:
@@ -1501,11 +1504,11 @@ class Zotero:
         modified_collections = payload["data"]["collections"] + [collection]
         headers = {"If-Unmodified-Since-Version": str(modified)}
         return self.client.patch(
-            url=build_url(
+            url=build_url(  # type: ignore
                 self.endpoint,
                 f"/{self.library_type}/{self.library_id}/items/{ident}",
             ),
-            data=json.dumps({"collections": modified_collections}),
+            data=json.dumps({"collections": modified_collections}),  # type: ignore
             headers=headers,
         )
 
@@ -1523,11 +1526,11 @@ class Zotero:
         ]
         headers = {"If-Unmodified-Since-Version": str(modified)}
         return self.client.patch(
-            url=build_url(
+            url=build_url(  # type: ignore
                 self.endpoint,
                 f"/{self.library_type}/{self.library_id}/items/{ident}",
             ),
-            data=json.dumps({"collections": modified_collections}),
+            data=json.dumps({"collections": modified_collections}),  # type: ignore
             headers=headers,
         )
 
@@ -1549,7 +1552,7 @@ class Zotero:
             ],
         }
         return self.client.delete(
-            url=build_url(
+            url=build_url(  # type: ignore
                 self.endpoint,
                 f"/{self.library_type}/{self.library_id}/tags",
             ),
@@ -1586,7 +1589,7 @@ class Zotero:
                 f"/{self.library_type}/{self.library_id}/items/{ident}",
             )
         headers = {"If-Unmodified-Since-Version": str(modified)}
-        return self.client.delete(url=url, params=params, headers=headers)
+        return self.client.delete(url=url, params=params, headers=headers)  # type: ignore
 
     @backoff_check
     def delete_collection(self, payload, last_modified=None):
@@ -1617,7 +1620,7 @@ class Zotero:
                 f"/{self.library_type}/{self.library_id}/collections/{ident}",
             )
         headers = {"If-Unmodified-Since-Version": str(modified)}
-        return self.client.delete(url=url, params=params, headers=headers)
+        return self.client.delete(url=url, params=params, headers=headers)  # type: ignore
 
 
 def error_handler(zot, req, exc=None):
@@ -1972,7 +1975,7 @@ class Zupload:
                 files=upload_pairs,
                 headers={"User-Agent": f"Pyzotero/{pz.__version__}"},
             )
-        except httpx.ConnectionError:
+        except httpx.ConnectionError:  # type: ignore
             msg = "ConnectionError"
             raise ze.UploadError(msg) from None
         try:
@@ -2009,7 +2012,7 @@ class Zupload:
             "retry-after",
         )
         if backoff:
-            self._set_backoff(backoff)
+            self._set_backoff(backoff)  # type: ignore
 
     def upload(self):
         """File upload functionality
