@@ -20,6 +20,8 @@ import zipfile
 from collections import OrderedDict
 from functools import wraps
 from pathlib import Path, PurePosixPath
+from string import Formatter
+from typing import Optional
 from urllib.parse import (
     parse_qs,
     parse_qsl,
@@ -39,7 +41,7 @@ from httpx import Request
 import pyzotero as pz
 
 from . import zotero_errors as ze
-from .api import ZoteroAPIOld
+from .api import ZoteroAPI
 from .filetransport import Client as File_Client
 
 # Avoid hanging the application if there's no server response
@@ -49,6 +51,8 @@ NOT_MODIFIED = 304
 ONE_HOUR = 3600
 DEFAULT_NUM_ITEMS = 50
 TOO_MANY_REQUESTS = 429
+
+STRING_FORMATTER = Formatter()
 
 
 def build_url(base_url, path, args_dict=None):
@@ -367,6 +371,28 @@ class Zotero:
         if c := self.client:
             c.close()
 
+    def _generate_api_path(self, api_path: str, key: Optional[str] = None) -> str:
+        """Fill the api path template with `library_type`, `library_id` and `key`.
+
+        :param api_path: API path string from `ZoteroAPI`.
+        :type api_path: str
+        :param key: itemKey, collectionKey or API key.
+        :type key: str
+        :return: API path.
+        """
+        field_list = [x for _, x, _, _ in STRING_FORMATTER.parse(api_path) if x]
+        if key in field_list and key is None:
+            raise ValueError(f"You need to give `key`'s value.")
+
+        field_dict = {"library_id": self.library_id}
+        if "library_type" in field_list:
+            field_dict["library_type"] = self.library_type
+
+        if "key" in field_list:
+            field_dict["key"] = key
+
+        return api_path.format(**field_dict)
+
     def _striplocal(self, url):
         """We need to remove the leading "/api" substring from urls if we're running in local mode"""
         if self.local:
@@ -655,7 +681,7 @@ class Zotero:
         return int(self.request.headers["Total-Results"])
 
     @retrieve
-    def key_info(self, **kwargs):
+    def key_info(self):
         """Retrieve info about the permissions associated with the
         key associated to the given Zotero instance
         """
@@ -669,13 +695,13 @@ class Zotero:
         return self._build_query(query_string)
 
     @retrieve
-    def settings(self, **kwargs):
+    def settings(self):
         """Get synced user settings"""
         query_string = "/{t}/{u}/settings"
         return self._build_query(query_string)
 
     @retrieve
-    def fulltext_item(self, itemkey, **kwargs):
+    def fulltext_item(self, itemkey):
         """Get full-text content for an item"""
         query_string = (
             f"/{self.library_type}/{self.library_id}/items/{itemkey}/fulltext"

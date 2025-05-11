@@ -139,3 +139,10 @@ class UploadError(PyZoteroError):
     """
 
     pass
+
+
+class MixInError(PyZoteroError):
+    """
+    Raise if the mixin class isn't use properly.
+    """
+    pass
